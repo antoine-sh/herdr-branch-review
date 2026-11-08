@@ -38,7 +38,7 @@ function parseNumstat(out) {
   return files;
 }
 
-const KEEP = ["root", "on", "base", "mbSha", "branch", "behind", "commits", "staged", "changes", "files", "dirty", "error", "sel", "kind", "open", "closed", "rows", "diffWidth", "note", "unpushed", "upBehind"];
+const KEEP = ["root", "on", "base", "mbSha", "branch", "behind", "commits", "staged", "changes", "files", "dirty", "error", "sel", "kind", "open", "closed", "rows", "diffWidth", "note", "unpushed", "upBehind", "cleanup"];
 
 export default class BranchReview extends View {
   init(_props, cx) {
@@ -272,7 +272,7 @@ export default class BranchReview extends View {
         }
         const rules = docs.length ? `\n\nFollow any commit message conventions in these instruction files (format, language, prefixes, trailers, length); ignore everything unrelated to commit messages. Project rules override global ones.\n\n${docs.join("\n\n")}` : "";
         const prompt = "Write a git commit message for the diff below: by default a concise imperative subject line (max 72 chars), then optionally a blank line and a short body. Reply with the message only, no quotes or code fences." + rules + "\n\n### Diff\n" + diff;
-        const r = await exec("claude", ["-p", "--model", "haiku", "--no-session-persistence", "--disable-slash-commands", "--tools=", "--", prompt], { cwd: root, on, timeout: 90000 });
+        const r = await exec("claude", ["-p", "--model", "haiku", "--no-session-persistence", "--disable-slash-commands", "--tools=", "--setting-sources", "", "--strict-mcp-config", "--system-prompt", "You write git commit messages. Reply with the message only.", "--", prompt], { cwd: root, on, timeout: 90000 });
         if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         const msg = r.stdout.trim().replace(/^```\w*\n?|\n?```$/g, "").trim();
         if (!msg) throw new Error("empty reply");
@@ -313,8 +313,27 @@ export default class BranchReview extends View {
         }
         const after = (await exec("git", [...READ, "rev-parse", "--short", base], { cwd: root, on })).stdout.trim();
         const stat = (await exec("git", [...READ, "diff", "--shortstat", before, base], { cwd: root, on })).stdout.trim();
+        if (key() === context && dir && dir !== root) this.cleanup = { branch, worktree: root, mainDir: dir };
         if (key() === context) this.note = `Merged ${branch} into ${base} (${count} commit${count === 1 ? "" : "s"}, now at ${after})${stat ? " · " + stat : ""}`;
       } catch (e) { if (key() === context) this.note = `Merge failed: ${e}`; }
+      finally { this.busy = null; this.refresh(cx); cx.notify(); }
+    });
+    cx.notify();
+  }
+
+  // After a merge from a linked worktree: remove that worktree and delete the merged branch (from main's worktree).
+  cleanUp(cx) {
+    const c = this.cleanup, { on } = this, context = this.context;
+    if (!c || this.busy) return;
+    this.busy = "cleanup"; this.note = null;
+    cx.spawn(async (cx) => {
+      try {
+        for (const args of [["worktree", "remove", c.worktree], ["branch", "-d", c.branch]]) {
+          const r = await exec("git", args, { cwd: c.mainDir, on });
+          if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
+        }
+        if (key() === context) { this.cleanup = null; this.note = `Deleted branch ${c.branch} and its worktree`; }
+      } catch (e) { if (key() === context) this.note = `Clean-up failed: ${e}`; }
       finally { this.busy = null; this.refresh(cx); cx.notify(); }
     });
     cx.notify();
@@ -470,7 +489,11 @@ export default class BranchReview extends View {
             (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())))
         .child(Scrollbar.vertical("br-diff").viewport_from_layout().absolute().inset_0())
         .when(!this.open && this.list(this.kind).length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"))))
-      .when(Boolean(this.note), (e) => e.child(div().flex_none().px(10).pt(8).text_size(11).text_color(/^(Merged|Pushed|Pulled)/.test(this.note) ? t.ansi2 : t.ansi1).child(this.note)))
+      .when(Boolean(this.note), (e) => e.child(div().flex_none().px(10).pt(8).text_size(11).text_color(/^(Merged|Pushed|Pulled|Deleted)/.test(this.note) ? t.ansi2 : t.ansi1).child(this.note)))
+      .when(Boolean(this.cleanup), (e) => e.child(div().flex_none().px(10).pt(8).child(h_flex().px(10).py(6).gap(8).items_center().rounded(8).border_1().border_color(t.border).bg(t.raised).text_size(11)
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(`Merged. Delete branch ${this.cleanup.branch} and its worktree?`))
+        .child(btn("cleanup-yes", this.busy === "cleanup" ? "Deleting…" : "Delete", (cx) => this.cleanUp(cx)))
+        .child(btn("cleanup-no", "Keep", (cx) => { this.cleanup = null; cx.notify(); })))))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("br-commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", stop).child(Input.new(this.input).h_full().flex_1().min_w(0).text_size(12).text_color(t.foreground))
           .child(div().id("br-ai").h(20).w(20).ml(6).flex().items_center().justify_center().flex_none().rounded(5).text_color(canAi ? t.accent : t.dim).when(canAi, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); this.generate(cx); }).child((this.busy === "ai" ? svg("mods/branch-review/ai.svg").spin(900) : svg("mods/branch-review/ai.svg")).size(14).flex_none())))
