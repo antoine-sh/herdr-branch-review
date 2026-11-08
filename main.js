@@ -38,12 +38,24 @@ function parseNumstat(out) {
   return files;
 }
 
+// `git worktree list --porcelain` → [{ path, branch, locked }] (locked: the reason, "" when none given, or null).
+async function worktrees(cwd, on) {
+  const r = await exec("git", [...READ, "worktree", "list", "--porcelain"], { cwd, on }), list = [];
+  for (const l of r.stdout.split("\n")) {
+    if (l.startsWith("worktree ")) list.push({ path: l.slice(9), branch: null, locked: null });
+    else if (!list.length) continue;
+    else if (l.startsWith("branch refs/heads/")) list.at(-1).branch = l.slice(18);
+    else if (l === "locked" || l.startsWith("locked ")) list.at(-1).locked = l.slice(7);
+  }
+  return list;
+}
+
 const KEEP = ["root", "on", "base", "mbSha", "branch", "behind", "commits", "staged", "changes", "files", "dirty", "error", "sel", "kind", "open", "closed", "rows", "diffWidth", "note", "unpushed", "upBehind", "cleanup"];
 
 export default class BranchReview extends View {
   init(_props, cx) {
     this.commits = []; this.files = []; this.staged = []; this.changes = []; this.kind = "changes"; this.rows = []; this.diffWidth = 0;
-    this.watching = new Set(); this.fetchedAt = new Map(); this.saved = new Map();
+    this.watching = new Set(); this.fetchedAt = new Map(); this.saved = new Map(); this.dismissed = new Set();
     this.sel = null; // selected commit sha; null = whole branch + uncommitted
     this.message = "";
     this.focus = cx.focus_handle();
@@ -129,7 +141,20 @@ export default class BranchReview extends View {
           if (x !== " ") staged.push({ add: 0, del: 0, ...stNum.get(path), path, status: x });
           if (y !== " ") changes.push({ add: 0, del: 0, ...chNum.get(path), path, status: y });
         }
+        // A linked worktree whose branch had commits of its own, now all in main and nothing pending:
+        // offer to remove it, however it was merged (this mod, a terminal, an agent).
+        const name = br.stdout.trim();
+        let cleanup = null;
+        if (name && name !== base && !commits.length && !ents.length && !this.dismissed.has(`${root}\n${name}`)) {
+          const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"])).stdout.trim().split("\n");
+          const own = gitDir && common && gitDir !== common ? (await git(["reflog", "show", "--format=%H", `refs/heads/${name}`])).stdout.split("\n").filter(Boolean).length : 0;
+          if (own > 1) {
+            const list = await worktrees(root, on), main = list.find((w) => w.branch === base), here = list.find((w) => w.path === root);
+            if (main && main.path !== root) cleanup = { branch: name, worktree: root, mainDir: main.path, locked: here?.locked ?? null };
+          }
+        }
         if (key() !== context) return;
+        if (this.busy !== "cleanup") this.cleanup = cleanup;
         Object.assign(this, { root, on, base, mbSha, branch: br.stdout.trim() || "(detached)", behind: Number(behind.stdout) || 0, unpushed: ahead.code === 0 ? Number(ahead.stdout) || 0 : null, upBehind: upBehind.code === 0 ? Number(upBehind.stdout) || 0 : null, commits, staged: staged.slice(0, 1000), changes: changes.slice(0, 1000), dirty: ents.length, error: null });
         this.watch(root, cx);
         this.autoFetch(cx);
@@ -299,12 +324,7 @@ export default class BranchReview extends View {
     this.busy = "merge"; this.note = null;
     cx.spawn(async (cx) => {
       try {
-        const wt = await exec("git", [...READ, "worktree", "list", "--porcelain"], { cwd: root, on });
-        let dir = null, cur = null;
-        for (const l of wt.stdout.split("\n")) {
-          if (l.startsWith("worktree ")) cur = l.slice(9);
-          else if (l === `branch refs/heads/${base}`) dir = cur;
-        }
+        const dir = (await worktrees(root, on)).find((w) => w.branch === base)?.path ?? null;
         const before = (await exec("git", [...READ, "rev-parse", base], { cwd: root, on })).stdout.trim();
         let r;
         if (dir) {
@@ -319,7 +339,6 @@ export default class BranchReview extends View {
         }
         const after = (await exec("git", [...READ, "rev-parse", "--short", base], { cwd: root, on })).stdout.trim();
         const stat = (await exec("git", [...READ, "diff", "--shortstat", before, base], { cwd: root, on })).stdout.trim();
-        if (key() === context && dir && dir !== root) this.cleanup = { branch, worktree: root, mainDir: dir };
         if (key() === context) this.note = `Merged ${branch} into ${base} (${count} commit${count === 1 ? "" : "s"}, now at ${after})${stat ? " · " + stat : ""}`;
       } catch (e) { if (key() === context) this.note = `Merge failed: ${e}`; }
       finally { this.busy = null; this.refresh(cx); cx.notify(); }
@@ -334,7 +353,8 @@ export default class BranchReview extends View {
     this.busy = "cleanup"; this.note = null;
     cx.spawn(async (cx) => {
       try {
-        for (const args of [["worktree", "remove", c.worktree], ["branch", "-d", c.branch]]) {
+        // A lock (e.g. an agent session's) is shown in the offer; Delete confirms past it. Removal still refuses uncommitted work.
+        for (const args of [...(c.locked !== null ? [["worktree", "unlock", c.worktree]] : []), ["worktree", "remove", c.worktree], ["branch", "-d", c.branch]]) {
           const r = await exec("git", args, { cwd: c.mainDir, on });
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         }
@@ -507,9 +527,9 @@ export default class BranchReview extends View {
         .when(!this.open && this.list(this.kind).length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"))))
       .when(Boolean(this.note), (e) => e.child(div().flex_none().px(10).pt(8).text_size(11).text_color(/^(Merged|Pushed|Pulled|Deleted)/.test(this.note) ? t.ansi2 : t.ansi1).child(this.note)))
       .when(Boolean(this.cleanup), (e) => e.child(div().flex_none().px(10).pt(8).child(h_flex().px(10).py(6).gap(8).items_center().rounded(8).border_1().border_color(t.border).bg(t.raised).text_size(11)
-        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(`Merged. Delete branch ${this.cleanup.branch} and its worktree?`))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(`${this.cleanup.branch} is merged into ${this.base}. Delete the branch and its worktree?${this.cleanup.locked !== null ? ` (worktree locked${this.cleanup.locked ? ": " + this.cleanup.locked : ""})` : ""}`))
         .child(btn("cleanup-yes", this.busy === "cleanup" ? "Deleting…" : "Delete", (cx) => this.cleanUp(cx)))
-        .child(btn("cleanup-no", "Keep", (cx) => { this.cleanup = null; cx.notify(); })))))
+        .child(btn("cleanup-no", "Keep", (cx) => { this.dismissed.add(`${this.cleanup.worktree}\n${this.cleanup.branch}`); this.cleanup = null; cx.notify(); })))))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("br-commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", stop).child(Input.new(this.input).h_full().flex_1().min_w(0).text_size(12).text_color(t.foreground))
           .child(div().id("br-ai").h(20).w(20).ml(6).flex().items_center().justify_center().flex_none().rounded(5).text_color(canAi ? t.accent : t.dim).when(canAi, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); this.generate(cx); }).child((this.busy === "ai" ? svg("mods/branch-review/ai.svg").spin(900) : svg("mods/branch-review/ai.svg")).size(14).flex_none())))

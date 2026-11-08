@@ -61,7 +61,7 @@ One click merges the branch into local `main`, with no confirmation.
 - A failed merge is aborted and the reason shown.
 - On success, the result stays above the commit box: commits merged, the new `main` head and the diffstat.
 - Disabled while there are uncommitted changes.
-- 🧹 **Worktree cleanup**: when the merge came from a linked worktree, a bar offers to delete the merged branch and remove that worktree (`git worktree remove`, `git branch -d`). Both are non-forcing, so they refuse if anything is left uncommitted.
+- 🧹 **Worktree cleanup**: whenever a linked worktree's branch is fully merged into `main` (by this mod, a terminal or an agent) and nothing is pending, a bar offers to delete the branch and remove the worktree (`git worktree remove`, `git branch -d`). Both are non-forcing, so they refuse if anything is left uncommitted. A locked worktree (e.g. held by an agent session) shows its lock reason, and Delete unlocks it first. Keep hides the offer for that branch.
 
 ### ⚡ Everyday
 
