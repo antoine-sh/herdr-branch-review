@@ -50,6 +50,17 @@ async function worktrees(cwd, on) {
   return list;
 }
 
+// Ids of the spaces on machine `on` whose terminals all live inside `dir` (a space without live folders: its folder).
+function worktreeSpaces(dir, on) {
+  const inside = (p) => p === dir || p.startsWith(dir.endsWith("/") ? dir : dir + "/");
+  const all = panes();
+  return spaces().filter((s) => (s.machine ?? null) === (on ?? null)).filter((s) => {
+    const tabs = new Set(s.tabs.map((t) => t.id));
+    const cwds = all.filter((p) => tabs.has(p.tab) && p.terminal && p.cwd).map((p) => p.cwd);
+    return cwds.length ? cwds.every(inside) : Boolean(s.folder) && inside(s.folder);
+  }).map((s) => s.id);
+}
+
 const KEEP = ["root", "on", "base", "mbSha", "branch", "behind", "commits", "staged", "changes", "files", "dirty", "error", "sel", "kind", "open", "closed", "rows", "diffWidth", "note", "unpushed", "upBehind", "cleanup"];
 
 export default class BranchReview extends View {
@@ -351,16 +362,24 @@ export default class BranchReview extends View {
     const c = this.cleanup, { on } = this, context = this.context;
     if (!c || this.busy) return;
     this.busy = "cleanup"; this.note = null;
+    // Spaces that only work in this worktree go with it (picked now, while their folders still exist).
+    const doomed = worktreeSpaces(c.worktree, on);
+    let removed = false;
     cx.spawn(async (cx) => {
       try {
         // A lock (e.g. an agent session's) is shown in the offer; Delete confirms past it. Removal still refuses uncommitted work.
         for (const args of [...(c.locked !== null ? [["worktree", "unlock", c.worktree]] : []), ["worktree", "remove", c.worktree], ["branch", "-d", c.branch]]) {
           const r = await exec("git", args, { cwd: c.mainDir, on });
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
+          if (args[1] === "remove") removed = true;
         }
         if (key() === context) { this.cleanup = null; this.note = `Deleted branch ${c.branch} and its worktree`; }
       } catch (e) { if (key() === context) this.note = `Clean-up failed: ${e}`; }
-      finally { this.busy = null; this.refresh(cx); cx.notify(); }
+      finally {
+        this.busy = null;
+        if (removed) for (const id of doomed) run("space.close", { id, confirmed: true });
+        this.refresh(cx); cx.notify();
+      }
     });
     cx.notify();
   }
@@ -527,7 +546,7 @@ export default class BranchReview extends View {
         .when(!this.open && this.list(this.kind).length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"))))
       .when(Boolean(this.note), (e) => e.child(div().flex_none().px(10).pt(8).text_size(11).text_color(/^(Merged|Pushed|Pulled|Deleted)/.test(this.note) ? t.ansi2 : t.ansi1).child(this.note)))
       .when(Boolean(this.cleanup), (e) => e.child(div().flex_none().px(10).pt(8).child(h_flex().px(10).py(6).gap(8).items_center().rounded(8).border_1().border_color(t.border).bg(t.raised).text_size(11)
-        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(`${this.cleanup.branch} is merged into ${this.base}. Delete the branch and its worktree?${this.cleanup.locked !== null ? ` (worktree locked${this.cleanup.locked ? ": " + this.cleanup.locked : ""})` : ""}`))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(`${this.cleanup.branch} is merged into ${this.base}. Delete the branch and its worktree${worktreeSpaces(this.cleanup.worktree, this.on).length ? " and close its space" : ""}?${this.cleanup.locked !== null ? ` (worktree locked${this.cleanup.locked ? ": " + this.cleanup.locked : ""})` : ""}`))
         .child(btn("cleanup-yes", this.busy === "cleanup" ? "Deleting…" : "Delete", (cx) => this.cleanUp(cx)))
         .child(btn("cleanup-no", "Keep", (cx) => { this.dismissed.add(`${this.cleanup.worktree}\n${this.cleanup.branch}`); this.cleanup = null; cx.notify(); })))))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
