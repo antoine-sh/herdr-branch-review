@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, home, watchFolder, theme, settings } from "herdr";
+import { spaces, panes, focused, exec, run, readTextFile, home, watchFolder, theme, settings } from "herdr";
 
 // Branch review: every commit and change of this worktree's branch against local main.
 
@@ -46,6 +46,7 @@ export default class BranchReview extends View {
     this.watching = new Set(); this.fetchedAt = new Map(); this.saved = new Map();
     this.sel = null; // selected commit sha; null = whole branch + uncommitted
     this.message = "";
+    this.focus = cx.focus_handle();
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
       const had = Boolean(this.message.trim());
@@ -210,6 +211,7 @@ export default class BranchReview extends View {
   }
 
   pickCommit(sha, cx) {
+    this.focus.focus();
     this.sel = this.sel === sha ? null : sha; this.kind = this.sel ? "commit" : "changes"; this.open = null; this.closed = false; this.setLines([]); this.files = [];
     const context = this.context;
     cx.spawn(async (cx) => {
@@ -397,7 +399,14 @@ export default class BranchReview extends View {
     });
   }
 
+  // Enter on the selected file: open it in vim in a new pane beside this one.
+  openInVim() {
+    if (!this.root || !this.open) return;
+    run("pane.split", { direction: "right", argv: ["vim", `${this.root}/${this.open}`] });
+  }
+
   pickFile(path, cx, kind) {
+    this.focus.focus();
     const same = this.open === path && this.kind === kind;
     this.kind = kind; this.open = same ? null : path; this.closed = !this.open; this.setLines([]);
     const context = this.context;
@@ -450,7 +459,7 @@ export default class BranchReview extends View {
     };
     const canCommit = Boolean(this.message.trim() && this.staged.length && !this.busy && !this.loading), canMerge = this.canMerge(), canAi = Boolean(this.staged.length && !this.busy && !this.loading);
     const title = this.base ? `${this.branch} ↔ ${this.base}` : "Branch review";
-    return v_flex().id("branch-review").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("branch-review").track_focus(this.focus).on_key_down((e, cx) => { if (e.key === "enter" && !this.typing && this.open) { cx.stop_propagation(); this.openInVim(); } }).size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().truncate().child(title))
         .when(Boolean(this.base), (e) => e.child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${this.commits.length} ahead · ${this.behind} behind`)))
