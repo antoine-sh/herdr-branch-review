@@ -11,6 +11,7 @@ It follows the focused space, so in a worktree-per-task workflow it always shows
 - **Diff viewer**: line-numbered, colored, virtualized and horizontally scrollable, so large diffs stay smooth.
 - **Commit**: type a message and commit what is staged.
 - **AI commit message**: the sparkle button asks Claude (Haiku, through `claude -p`) to write a message from the staged diff. It follows commit conventions found in your `~/.claude/CLAUDE.md`, `AGENTS.md`, and the project's `CLAUDE.md` / `AGENTS.md`.
+- **Push (on main)**: when the current branch is `main` (or `master`), the merge button becomes `Push main` and runs `git push`.
 - **Merge to main**: merges the branch into local `main`. If `main` is checked out in another worktree, the merge runs there; otherwise only a fast-forward is done. A failed merge is aborted. It needs a second click to confirm and is disabled while there are uncommitted changes.
 - **Live**: refreshes when files in the repository change, and every 10 seconds as a fallback.
 - **Remote spaces**: works on spaces that live on another machine; git runs there.
