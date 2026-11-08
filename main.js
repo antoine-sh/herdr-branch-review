@@ -73,20 +73,22 @@ export default class BranchReview extends View {
     });
   }
 
+  // Clear the repository view. The note and clean-up offer survive (a clean-up removes the folder we show).
   reset() {
-    this.root = null; this.commits = []; this.files = []; this.staged = []; this.changes = []; this.kind = "changes"; this.open = null; this.sel = null;
-    this.setLines([]); this.error = null; this.base = null; this.branch = "";
+    Object.assign(this, { root: null, base: null, mbSha: null, branch: "", behind: 0, unpushed: null, upBehind: null, dirty: 0, error: null,
+      commits: [], files: [], staged: [], changes: [], kind: "changes", open: null, sel: null });
+    this.setLines([]);
   }
 
   refresh(cx) {
-    if (this.loading) return;
+    if (this.loading) { this.again = true; return; }
     const { cwd, on } = location(), context = key();
     if (context !== this.context) {
       // Each space keeps its own view: park the old one, bring back this one's (refreshed below).
       if (this.context) this.saved.set(this.context, Object.fromEntries(KEEP.map((k) => [k, this[k]])));
       this.context = context;
       const back = this.saved.get(context);
-      if (back) Object.assign(this, back); else { this.reset(); this.closed = false; }
+      if (back) Object.assign(this, back); else { this.reset(); this.closed = false; this.note = null; this.cleanup = null; }
     }
     if (!cwd) return;
     this.loading = true;
@@ -135,7 +137,11 @@ export default class BranchReview extends View {
         this.reconcile();
         if (this.open) { try { await this.loadDiff(this.open, context); } catch { if (key() === context) this.setLines(["Cannot preview this diff"]); } }
       } catch (e) { if (key() === context) this.error = String(e); }
-      finally { this.loading = false; cx.notify(); }
+      finally {
+        this.loading = false;
+        if (this.again) { this.again = false; this.refresh(cx); }
+        cx.notify();
+      }
     });
   }
 
@@ -217,7 +223,7 @@ export default class BranchReview extends View {
         await this.loadFiles(context);
         this.reconcile();
         if (this.open) await this.loadDiff(this.open, context);
-      } catch { this.setLines(["Cannot preview this diff"]); }
+      } catch { if (key() === context) this.setLines(["Cannot preview this diff"]); }
       cx.notify();
     });
     cx.notify();
@@ -229,9 +235,9 @@ export default class BranchReview extends View {
     cx.spawn(async (cx) => {
       try {
         const r = await exec("git", args, { cwd: root, on });
-        if (r.code !== 0) this.error = (r.stderr || r.stdout).trim();
-      } catch (e) { this.error = String(e); }
-      this.loading = false; this.refresh(cx); cx.notify();
+        if (r.code !== 0) this.note = `git ${args[0]} failed: ${(r.stderr || r.stdout).trim()}`;
+      } catch (e) { this.note = `git ${args[0]} failed: ${e}`; }
+      this.refresh(cx); cx.notify();
     });
   }
 
@@ -242,10 +248,8 @@ export default class BranchReview extends View {
     this.busy = "commit"; this.note = null;
     cx.spawn(async (cx) => {
       try {
-        for (const args of [["commit", "-m", message]]) {
-          const r = await exec("git", args, { cwd: root, on });
-          if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
-        }
+        const r = await exec("git", ["commit", "-m", message], { cwd: root, on });
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         if (key() === context) { this.message = ""; this.input.set_value(""); }
       } catch (e) { if (key() === context) this.note = `Commit failed: ${e}`; }
       finally { this.busy = null; this.refresh(cx); cx.notify(); }
@@ -253,7 +257,7 @@ export default class BranchReview extends View {
     cx.notify();
   }
 
-  // Ask Haiku for a commit message from the staged diff .
+  // Ask Haiku for a commit message from the staged diff.
   generate(cx) {
     if (!this.root || this.busy || this.loading || !this.staged.length) return;
     const { root, on } = this, context = this.context;
@@ -265,7 +269,7 @@ export default class BranchReview extends View {
         const diff = d.stdout.slice(0, 40000);
         if (!diff.trim()) throw new Error("no text changes to describe");
         // Project and global instructions: their commit-message rules win over the defaults below.
-        const h = (await home()).replace(/\/$/, ""), docs = [];
+        const h = home().replace(/\/$/, ""), docs = [];
         for (const [label, path, remote] of [["Global", `${h}/.claude/CLAUDE.md`], ["Global", `${h}/.claude/AGENTS.md`], ["Global", `${h}/AGENTS.md`], ["Project", `${root}/CLAUDE.md`, true], ["Project", `${root}/AGENTS.md`, true]]) {
           const text = await readTextFile(path, remote ? { on } : {}).catch(() => null);
           if (text?.trim()) docs.push(`### ${label} instructions (${path})\n${text.slice(0, 8000)}`);
@@ -304,7 +308,7 @@ export default class BranchReview extends View {
         if (dir) {
           const st = await exec("git", [...READ, "status", "--porcelain", "--untracked-files=no"], { cwd: dir, on });
           if (st.stdout.trim()) throw new Error(`${base} has uncommitted changes in ${dir}`);
-          r = await exec("git", ["merge", branch], { cwd: dir, on });
+          r = await exec("git", ["merge", "--no-edit", branch], { cwd: dir, on });
           if (r.code !== 0) { await exec("git", ["merge", "--abort"], { cwd: dir, on }); throw new Error((r.stderr || r.stdout).trim()); }
         } else {
           // main isn't checked out anywhere: only a fast-forward is possible.
@@ -390,10 +394,10 @@ export default class BranchReview extends View {
           : [["restore", "--", "."], ["clean", "-fd"]];
         for (const args of runs) {
           const r = await exec("git", args, { cwd: root, on });
-          if (r.code !== 0) { this.error = (r.stderr || r.stdout).trim(); break; }
+          if (r.code !== 0) { this.note = `Discard failed: ${(r.stderr || r.stdout).trim()}`; break; }
         }
-      } catch (e) { this.error = String(e); }
-      this.loading = false; this.refresh(cx); cx.notify();
+      } catch (e) { this.note = `Discard failed: ${e}`; }
+      this.refresh(cx); cx.notify();
     });
   }
 
@@ -402,7 +406,7 @@ export default class BranchReview extends View {
     this.kind = kind; this.open = same ? null : path; this.closed = !this.open; this.setLines([]);
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
-      try { await this.loadDiff(path, context); } catch { this.setLines(["Cannot preview this diff"]); }
+      try { await this.loadDiff(path, context); } catch { if (key() === context) this.setLines(["Cannot preview this diff"]); }
       cx.notify();
     });
     cx.notify();
