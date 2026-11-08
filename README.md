@@ -28,7 +28,7 @@ Destructive buttons (`⟲` discard, `Discard all`) need two clicks within one se
 ## Install
 
 ```sh
-git clone https://github.com/<you>/herdr-branch-review ~/.config/herdr-app/mods/branch-review
+git clone https://github.com/antoine-sh/herdr-branch-review ~/.config/herdr-app/mods/branch-review
 herdr-app check ~/.config/herdr-app/mods/branch-review
 ```
 
