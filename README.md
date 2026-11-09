@@ -138,7 +138,13 @@ herdr-app do mod.open --name branch-review
 
 | File | Purpose |
 |---|---|
-| `main.js` | the mod |
+| `main.js` | the panel's state and actions (loading, selection, stage/commit/merge/pull/push/clean-up) |
+| `context.js` | where to look: the focused pane's folder and machine, and the spaces inside a worktree |
+| `git.js` | reading the repository (snapshot, commit files, diff lines); never changes anything |
+| `ops.js` | changing the repository (stage, discard, commit, merge, pull, push, worktree removal) |
+| `message.js` | AI commit message from the staged diff (`claude -p --model haiku`) |
+| `diff.js` | diff lines → numbered rows, and the diff pane |
+| `ui.js` | the rest of the panel: header, commit timeline, file lists, notices, footer |
 | `mod.json` | placement (`none`) |
 | `ai.svg`, `review.svg` | icons |
 | `gpui-kit.d.ts`, `jsconfig.json` | editor types, rewritten by Herdr on start (safe to git-ignore) |
