@@ -180,10 +180,10 @@ export default class BranchReview extends View {
     cx.notify();
   }
 
-  // Enter on the selected file: open it in neovim in a new pane beside this one.
+  // Enter on the selected file: open it in neovim in a new tab.
   openInNvim() {
     if (!this.root || !this.open) return;
-    run("pane.split", { direction: "right", argv: ["nvim", `${this.root}/${this.open}`] });
+    run("tab.new", { name: this.open.split("/").pop(), folder: this.root, argv: ["nvim", `${this.root}/${this.open}`] });
   }
 
   // ── File actions: quick, no busy state; a failure lands in the note ─────
