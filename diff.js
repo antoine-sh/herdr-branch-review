@@ -33,9 +33,10 @@ function diffRow({ kind, number, text }, t) {
 // `v`: the BranchReview view (rows, diffWidth, open file).
 export function diffPane(v, t) {
   return div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
-    .child(div().id("br-diff-x").size_full().overflow_x_scrollbar()
+    .child(div().id("br-diff-x").size_full().overflow_x_scroll()
       .child(div().w_full().min_w(v.diffWidth).h_full().child(v_virtual_list("br-diff", v.rows.length, 20, (i) => String(i),
         (range) => v.rows.slice(range.start, range.end).map((row) => diffRow(row, t))).size_full())))
     .child(Scrollbar.vertical("br-diff").viewport_from_layout().absolute().inset_0())
+    .child(Scrollbar.horizontal("br-diff-x").absolute().inset_0())
     .when(!v.open && v.list(v.kind).length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes")));
 }
