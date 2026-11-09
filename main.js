@@ -180,10 +180,10 @@ export default class BranchReview extends View {
     cx.notify();
   }
 
-  // Enter on the selected file: open it in vim in a new pane beside this one.
-  openInVim() {
+  // Enter on the selected file: open it in neovim in a new pane beside this one.
+  openInNvim() {
     if (!this.root || !this.open) return;
-    run("pane.split", { direction: "right", argv: ["vim", `${this.root}/${this.open}`] });
+    run("pane.split", { direction: "right", argv: ["nvim", `${this.root}/${this.open}`] });
   }
 
   // ── File actions: quick, no busy state; a failure lands in the note ─────
@@ -298,7 +298,7 @@ export default class BranchReview extends View {
   render(cx) {
     if (contextKey() !== this.context) this.refresh(cx);
     const t = theme();
-    return v_flex().id("branch-review").track_focus(this.focus).on_key_down((e, cx) => { if (e.key === "enter" && !this.typing && this.open) { cx.stop_propagation(); this.openInVim(); } })
+    return v_flex().id("branch-review").track_focus(this.focus).on_key_down((e, cx) => { if (e.key === "enter" && !this.typing && this.open) { cx.stop_propagation(); this.openInNvim(); } })
       .size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(header(this, t))
       .child(commitList(this, t))
