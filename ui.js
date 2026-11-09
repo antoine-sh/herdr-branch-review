@@ -111,7 +111,7 @@ export function footer(v, t) {
   const canCommit = v.canCommit(), canAi = v.canGenerate(), canMerge = v.canMerge();
   const icon = svg("mods/branch-review/ai.svg");
   let sync;
-  if (!v.onBase()) sync = bigButton("br-merge", canMerge, (cx) => v.merge(cx), v.busy === "merge" ? "Merging…" : `Merge to ${v.base ?? "main"}`)
+  if (!v.onBase()) sync = bigButton("br-merge", canMerge, (cx) => v.merge(cx), v.busy === "merge" ? "Merging (AI resolves conflicts)…" : `Merge to ${v.base ?? "main"}`)
     .border_1().border_color(t.border).bg(canMerge ? t.raised : t.background).text_color(canMerge ? t.foreground : t.dim);
   else if (v.upBehind > 0) sync = bigButton("br-push", v.canPull(), (cx) => v.pull(cx), v.busy === "pull" ? "Pulling…" : v.dirty ? `Pull ${v.base} (commit or discard first)` : v.diverged() ? `Diverged: pull & merge (${v.upBehind}↓ ${v.unpushed}↑)` : `Pull ${v.base} (${v.upBehind})`)
     .border_1().border_color(v.diverged() ? t.ansi1 : t.border).bg(v.canPull() ? t.raised : t.background).text_color(v.canPull() ? t.foreground : t.dim);

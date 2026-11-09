@@ -1,5 +1,6 @@
 import { exec } from "herdr";
 import { readGit, worktrees } from "./git.js";
+import { resolveConflicts } from "./resolve.js";
 
 // Changing the repository: each operation resolves when done or throws git's own message.
 
@@ -29,22 +30,31 @@ export async function discard(root, on, file) {
 export const commit = (root, on, message) => git(["commit", "-m", message], root, on);
 
 // Merge `branch` into local `base`. Base is usually checked out in another worktree: merge there.
-// Returns `{ after, stat }`: base's new short sha and the shortstat of what came in.
+// A conflict is resolved by AI (resolve.js); if that fails the merge is aborted and base is left as it was.
+// Returns `{ after, stat, before, resolved }`: base's new short sha, the shortstat of what came in, its old short sha and the AI-resolved files.
 export async function merge(root, on, base, branch) {
   const dir = (await worktrees(root, on)).find((w) => w.branch === base)?.path ?? null;
   const before = (await readGit(["rev-parse", base], root, on)).stdout.trim();
+  let resolved = [];
   if (dir) {
     const st = await readGit(["status", "--porcelain", "--untracked-files=no"], dir, on);
     if (st.stdout.trim()) throw new Error(`${base} has uncommitted changes in ${dir}`);
     const r = await exec("git", ["merge", "--no-edit", branch], { cwd: dir, on });
-    if (r.code !== 0) { await exec("git", ["merge", "--abort"], { cwd: dir, on }); throw new Error((r.stderr || r.stdout).trim()); }
+    if (r.code !== 0) {
+      const why = (r.stderr || r.stdout).trim();
+      try { resolved = await resolveConflicts(dir, on, base, branch); }
+      catch (e) {
+        await exec("git", ["merge", "--abort"], { cwd: dir, on });
+        throw new Error(`${why}\nAI resolution failed (merge aborted): ${e?.message ?? e}`);
+      }
+    }
   } else {
     // base isn't checked out anywhere: only a fast-forward is possible.
     await git(["fetch", ".", `${branch}:${base}`], root, on);
   }
   const after = (await readGit(["rev-parse", "--short", base], root, on)).stdout.trim();
   const stat = (await readGit(["diff", "--shortstat", before, base], root, on)).stdout.trim();
-  return { after, stat };
+  return { after, stat, resolved, before: before.slice(0, 8) };
 }
 
 // `merge`: the branch diverged from upstream, so merge it in; a conflict aborts and leaves the branch as it was.

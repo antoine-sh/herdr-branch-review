@@ -252,8 +252,8 @@ export default class BranchReview extends View {
     if (!this.canMerge()) return;
     const { root, on, base, branch } = this, count = this.commits.length;
     this.act("merge", "Merge failed", async () => {
-      const { after, stat } = await ops.merge(root, on, base, branch);
-      return `Merged ${branch} into ${base} (${count} commit${count === 1 ? "" : "s"}, now at ${after})${stat ? " · " + stat : ""}`;
+      const { after, stat, resolved, before } = await ops.merge(root, on, base, branch);
+      return `Merged ${branch} into ${base} (${count} commit${count === 1 ? "" : "s"}, now at ${after})${stat ? " · " + stat : ""}${resolved.length ? ` · AI-resolved ${resolved.length} conflicted file${resolved.length === 1 ? "" : "s"} (${resolved.join(", ")}); undo: git reset --hard ${before}` : ""}`;
     }, cx);
   }
 
