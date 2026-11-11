@@ -14,7 +14,7 @@ export async function generateMessage(root, on) {
     if (text?.trim()) docs.push(`### ${label} instructions (${path})\n${text.slice(0, 8000)}`);
   }
   const rules = docs.length ? `\n\nFollow any commit message conventions in these instruction files (format, language, prefixes, trailers, length); ignore everything unrelated to commit messages. Project rules override global ones.\n\n${docs.join("\n\n")}` : "";
-  const prompt = "Write a git commit message for the diff below: by default a concise imperative subject line (max 72 chars), then optionally a blank line and a short body. Reply with the message only, no quotes or code fences." + rules + "\n\n### Diff\n" + diff;
+  const prompt = "Write a git commit message for the diff below: by default a short concise imperative subject line (max 72 chars), then optionally a blank line and a short body. Reply with the message only, no quotes or code fences." + rules + "\n\n### Diff\n" + diff;
   const r = await exec("claude", ["-p", "--model", "haiku", "--no-session-persistence", "--disable-slash-commands", "--tools=", "--setting-sources", "", "--strict-mcp-config", "--system-prompt", "You write git commit messages. Reply with the message only.", "--", prompt], { cwd: root, on, timeout: 90000 });
   if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
   const msg = r.stdout.trim().replace(/^```\w*\n?|\n?```$/g, "").trim();
